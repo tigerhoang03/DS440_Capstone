@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
 
     RSS_DEMO_URL: str = "https://feeds.a.dj.com/rss/RSSMarketsMain.xml"
+    PRNEWSWIRE_RSS_SOURCE_URL: str = "https://www.prnewswire.com/rss/"
+    GLOBENEWSWIRE_RSS_SOURCE_URL: str = "https://www.globenewswire.com/rss/list"
+    WIRE_RSS_TIMEOUT_SEC: int = 15
+    WIRE_RSS_MAX_FEEDS_PER_SOURCE: int = 15
+    WIRE_RSS_MAX_ITEMS_PER_FEED: int = 50
 
     @property
     def postgres_dsn(self) -> str:

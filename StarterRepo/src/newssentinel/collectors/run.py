@@ -1,14 +1,15 @@
 import argparse
 import asyncio
-from importlib import import_module
 
 from ..logging import setup_logging
 from ..queue.redis_streams import get_redis, publish_items
 from .rss.demo import RssDemoCollector
+from .rss.wires import WireSitesRssCollector
 from .stocktwits.collector import StockTwitsCollector
 
 COLLECTORS = {
     "rss_demo": lambda: RssDemoCollector(),
+    "wire_sites_rss": lambda: WireSitesRssCollector(),
     "stocktwits_aapl": lambda: StockTwitsCollector(symbol="AAPL", pages=2),
 }
 

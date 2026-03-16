@@ -53,6 +53,11 @@ uvicorn newssentinel.api.main:app --reload
 python -m newssentinel.collectors.run --collector rss_demo
 ```
 
+### Run the PR Newswire + GlobeNewswire collector
+```bash
+python -m newssentinel.collectors.run --collector wire_sites_rss
+```
+
 ### Run the dashboard
 ```bash
 streamlit run src/newssentinel/dashboard/app.py
