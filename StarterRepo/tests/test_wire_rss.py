@@ -23,3 +23,19 @@ def test_discover_rss_links_from_listing_page():
 def test_source_name_normalization():
     assert _normalize_source_name("https://www.prnewswire.com/rss/foo.xml") == "prnewswire_rss"
     assert _normalize_source_name("https://www.globenewswire.com/rss/news.xml") == "globenewswire_rss"
+
+
+def test_discover_rss_links_from_js_window_location():
+    html = r"""
+    <html><body>
+      <script>
+        javascript:window.location.href='\/rss\/news\u002Dreleases\u002Dlist.rss'
+      </script>
+    </body></html>
+    """
+    links = _discover_rss_links(
+        listing_url="https://www.prnewswire.com/rss/",
+        html=html,
+        max_links=10,
+    )
+    assert links == ["https://www.prnewswire.com/rss/news-releases-list.rss"]

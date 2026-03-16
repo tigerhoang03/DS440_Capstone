@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import re
 from typing import Iterable
 from urllib.parse import urljoin
 
@@ -41,25 +42,35 @@ def _discover_rss_links(listing_url: str, html: str, max_links: int) -> list[str
     links: list[str] = []
     seen: set[str] = set()
 
-    for tag in soup.find_all("a", href=True):
-        href = tag["href"].strip()
-        candidate = urljoin(listing_url, href)
+    def maybe_add(raw_href: str) -> None:
+        candidate = urljoin(listing_url, raw_href.strip())
         lower = candidate.lower()
-
-        looks_like_feed = (
-            "rss" in lower
-            or "feed" in lower
-            or lower.endswith(".xml")
-            or lower.endswith(".rss")
-            or lower.endswith(".atom")
-        )
-        if not looks_like_feed:
-            continue
+        has_feed_suffix = lower.endswith(".xml") or lower.endswith(".rss") or lower.endswith(".atom")
+        looks_like_feed_query = "format=rss" in lower or "output=rss" in lower
+        if not (has_feed_suffix or looks_like_feed_query):
+            return
         if candidate in seen:
-            continue
-
+            return
         seen.add(candidate)
         links.append(candidate)
+
+    for tag in soup.find_all("a", href=True):
+        maybe_add(tag["href"])
+        if len(links) >= max_links:
+            break
+
+    if len(links) >= max_links:
+        return links
+
+    # Some pages (notably PR Newswire) keep RSS URLs inside javascript strings,
+    # e.g. window.location.href='\/rss\/news\u002Dreleases\u002Dlist.rss'
+    for raw in re.findall(r"window\.location\.href='([^']+)'", html):
+        decoded = raw.replace("\\/", "/")
+        try:
+            decoded = decoded.encode("utf-8").decode("unicode_escape")
+        except Exception:
+            pass
+        maybe_add(decoded)
         if len(links) >= max_links:
             break
     return links
