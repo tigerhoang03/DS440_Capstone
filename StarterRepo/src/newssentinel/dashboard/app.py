@@ -15,6 +15,13 @@ source = col3.text_input("Source filter (optional)", "")
 refresh = st.sidebar.slider("Refresh (sec)", 1, 20, 5, 1)
 auto = st.sidebar.toggle("Auto-refresh", True)
 
+
+def parse_datetime_col(df: pd.DataFrame, column: str) -> None:
+    if column in df.columns:
+        # Mixed ISO strings can include optional fractional seconds.
+        df[column] = pd.to_datetime(df[column], format="ISO8601", errors="coerce")
+
+
 def fetch():
     params = {"limit": limit}
     if source.strip():
@@ -27,9 +34,9 @@ def fetch():
 data = fetch()
 df = pd.DataFrame(data)
 if not df.empty:
-    df["detected_at"] = pd.to_datetime(df["detected_at"])
-    if "published_at" in df.columns:
-        df["published_at"] = pd.to_datetime(df["published_at"])
+    parse_datetime_col(df, "detected_at")
+    parse_datetime_col(df, "published_at")
+    df = df.dropna(subset=["detected_at"])
     df = df.sort_values("detected_at", ascending=False)
 
     # KPIs
@@ -56,8 +63,11 @@ if not df.empty:
         st.line_chart(tmp, x="detected_at", y="count")
 
     st.subheader("Live feed")
+    display_cols = ["detected_at", "source", "tickers", "sentiment", "title", "summary", "url"]
+    if "published_at" in df.columns:
+        display_cols.insert(1, "published_at")
     st.dataframe(
-        df[["detected_at","published_at","source","tickers","sentiment","title","summary","url"]],
+        df[display_cols],
         use_container_width=True,
         height=650,
     )
