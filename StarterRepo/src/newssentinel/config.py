@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     WIRE_RSS_MAX_FEEDS_PER_SOURCE: int = 15
     WIRE_RSS_MAX_ITEMS_PER_FEED: int = 50
 
+    CURL_IMPERSONATE_PROFILE: str = "chrome"
+    CURL_IMPERSONATE_TIMEOUT_SEC: int = 30
+
+    FINVIZ_NEWS_URL: str = "https://finviz.com/news.ashx?v=3"
+    FINVIZ_MAX_ITEMS: int = 120
+
+    TRADINGVIEW_NEWS_FLOW_URL: str = "https://www.tradingview.com/news-flow/"
+    TRADINGVIEW_NEWS_FALLBACK_URL: str = "https://www.tradingview.com/news/"
+    TRADINGVIEW_MAX_ITEMS: int = 120
+
     @property
     def postgres_dsn(self) -> str:
         return (

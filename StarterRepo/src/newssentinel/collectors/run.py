@@ -3,14 +3,18 @@ import asyncio
 
 from ..logging import setup_logging
 from ..queue.redis_streams import get_redis, publish_items
+from .finviz.collector import FinvizNewsCollector
 from .rss.demo import RssDemoCollector
 from .rss.wires import WireSitesRssCollector
 from .stocktwits.collector import StockTwitsCollector
+from .tradingview.collector import TradingViewNewsCollector
 
 COLLECTORS = {
     "rss_demo": lambda: RssDemoCollector(),
     "wire_sites_rss": lambda: WireSitesRssCollector(),
     "stocktwits_aapl": lambda: StockTwitsCollector(symbol="AAPL", pages=2),
+    "finviz_news": lambda: FinvizNewsCollector(),
+    "tradingview_news": lambda: TradingViewNewsCollector(),
 }
 
 async def main():

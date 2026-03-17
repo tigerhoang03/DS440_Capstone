@@ -58,6 +58,16 @@ python -m newssentinel.collectors.run --collector rss_demo
 python -m newssentinel.collectors.run --collector wire_sites_rss
 ```
 
+### Run the Finviz collector (curl impersonate)
+```bash
+python -m newssentinel.collectors.run --collector finviz_news
+```
+
+### Run the TradingView collector (curl impersonate)
+```bash
+python -m newssentinel.collectors.run --collector tradingview_news
+```
+
 ### Run the dashboard
 ```bash
 streamlit run src/newssentinel/dashboard/app.py
