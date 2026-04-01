@@ -73,6 +73,17 @@ python -m newssentinel.collectors.run --collector tradingview_news
 python -m newssentinel.collectors.run --collector all_live_news
 ```
 
+### Run collectors continuously (low-lag mode)
+```bash
+# all live collectors every 5 seconds
+python -m newssentinel.collectors.run --collector all_live_news --interval-sec 5
+
+# single collector every 10 seconds
+python -m newssentinel.collectors.run --collector finviz_news --interval-sec 10
+```
+
+Use `Ctrl+C` to stop loop mode.
+
 ### Run the dashboard
 ```bash
 streamlit run src/newssentinel/dashboard/app.py

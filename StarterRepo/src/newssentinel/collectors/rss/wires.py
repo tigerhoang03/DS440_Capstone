@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import logging
 import re
 from typing import Iterable
 from urllib.parse import urljoin
@@ -16,6 +17,8 @@ from ...config import settings
 from ...enrich.sentiment import vader_compound
 from ...enrich.tickers import extract_tickers
 from ...models.schema import NormalizedItem, SourceType
+
+log = logging.getLogger("wire_sites_rss_collector")
 
 
 def _to_datetime(value: str | None) -> datetime | None:
@@ -104,7 +107,7 @@ class WireSitesRssCollector(Collector):
         self.max_items_per_feed = max_items_per_feed or settings.WIRE_RSS_MAX_ITEMS_PER_FEED
 
     async def _resolve_feed_urls(self, client: httpx.AsyncClient, source_url: str) -> list[str]:
-        r = await client.get(source_url)
+        r = await client.get(source_url, follow_redirects=True)
         r.raise_for_status()
 
         body = r.text
@@ -169,13 +172,29 @@ class WireSitesRssCollector(Collector):
         items: list[NormalizedItem] = []
         async with httpx.AsyncClient(timeout=settings.WIRE_RSS_TIMEOUT_SEC) as client:
             for source_url in self.source_urls:
-                feed_urls = await self._resolve_feed_urls(client, source_url)
-                for feed_url in feed_urls:
-                    r = await client.get(feed_url)
-                    r.raise_for_status()
+                try:
+                    feed_urls = await self._resolve_feed_urls(client, source_url)
+                except Exception:
+                    log.exception("Failed resolving feed urls for source=%s", source_url)
+                    continue
 
-                    parsed = feedparser.parse(r.text)
-                    feed_title = parsed.feed.get("title")
-                    for entry in parsed.entries[: self.max_items_per_feed]:
-                        items.append(self._build_item(entry, source_url=feed_url, feed_title=feed_title))
+                for feed_url in feed_urls:
+                    try:
+                        r = await client.get(feed_url, follow_redirects=True)
+                        r.raise_for_status()
+
+                        parsed = feedparser.parse(r.text)
+                        feed_title = parsed.feed.get("title")
+                        for entry in parsed.entries[: self.max_items_per_feed]:
+                            items.append(self._build_item(entry, source_url=feed_url, feed_title=feed_title))
+                    except httpx.HTTPStatusError as exc:
+                        status = exc.response.status_code if exc.response is not None else None
+                        if status == 404:
+                            log.warning("Skipping unavailable feed (404): %s", feed_url)
+                            continue
+                        log.exception("HTTP error fetching/parsing feed_url=%s", feed_url)
+                        continue
+                    except Exception:
+                        log.exception("Failed fetching/parsing feed_url=%s", feed_url)
+                        continue
         return items

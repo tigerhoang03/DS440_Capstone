@@ -54,15 +54,7 @@ async def run_target(target: str):
     return out
 
 
-async def main():
-    setup_logging()
-    targets = sorted([*COLLECTORS.keys(), *COLLECTOR_GROUPS.keys()])
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--collector", required=True, choices=targets)
-    args = parser.parse_args()
-
-    collected = await run_target(args.collector)
+async def publish_collected(target: str, collected) -> int:
     redis = await get_redis()
     try:
         total = 0
@@ -70,9 +62,58 @@ async def main():
             n = await publish_items(redis, items)
             total += n
             print(f"Published {n} items from {collector_name}")
-        print(f"Published {total} total items from target={args.collector}")
+        print(f"Published {total} total items from target={target}")
+        return total
     finally:
         await redis.aclose()
+
+
+async def run_once(target: str) -> int:
+    collected = await run_target(target)
+    return await publish_collected(target, collected)
+
+
+async def main():
+    setup_logging()
+    targets = sorted([*COLLECTORS.keys(), *COLLECTOR_GROUPS.keys()])
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--collector", required=True, choices=targets)
+    parser.add_argument(
+        "--interval-sec",
+        type=float,
+        default=0.0,
+        help="If > 0, run collector(s) continuously every N seconds.",
+    )
+    parser.add_argument(
+        "--max-runs",
+        type=int,
+        default=0,
+        help="Optional cap for loop mode. 0 means run forever.",
+    )
+    args = parser.parse_args()
+
+    if args.interval_sec <= 0:
+        await run_once(args.collector)
+        return
+
+    if args.interval_sec < 1:
+        log.warning("Very low interval (%ss) may trigger source rate limits", args.interval_sec)
+
+    run_no = 0
+    while True:
+        run_no += 1
+        try:
+            total = await run_once(args.collector)
+            log.info("Collector loop run=%d published_total=%d", run_no, total)
+        except Exception:
+            log.exception("Collector loop run=%d failed", run_no)
+
+        if args.max_runs > 0 and run_no >= args.max_runs:
+            log.info("Collector loop reached max runs (%d); exiting", args.max_runs)
+            break
+
+        await asyncio.sleep(args.interval_sec)
 
 if __name__ == "__main__":
     asyncio.run(main())
