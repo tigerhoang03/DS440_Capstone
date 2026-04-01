@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     REDIS_STREAM: str = "news_items"
     REDIS_CONSUMER_GROUP: str = "ingest_group"
     REDIS_CONSUMER_NAME: str = "ingest_1"
+    COLLECTOR_DELTA_CACHE_SIZE: int = 50000
     INGEST_BATCH_SIZE: int = 200
     INGEST_BLOCK_MS: int = 250
 

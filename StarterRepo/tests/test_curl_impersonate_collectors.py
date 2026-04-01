@@ -1,6 +1,10 @@
 from datetime import datetime
 
-from newssentinel.collectors.finviz.collector import _parse_finviz_rows, _parse_finviz_time
+from newssentinel.collectors.finviz.collector import (
+    _build_finviz_external_id,
+    _parse_finviz_rows,
+    _parse_finviz_time,
+)
 from newssentinel.collectors.tradingview.collector import _parse_tradingview_cards, _parse_tradingview_time
 
 
@@ -31,6 +35,14 @@ def test_parse_finviz_time_relative():
     now = datetime(2026, 3, 16, 12, 0, 0)
     dt = _parse_finviz_time("6 min", now=now)
     assert dt == datetime(2026, 3, 16, 11, 54, 0)
+
+
+def test_finviz_external_id_is_stable_for_same_story():
+    url = "https://finviz.com/news/123/test-story"
+    title = "Test Headline"
+    a = _build_finviz_external_id(url=url, title=title)
+    b = _build_finviz_external_id(url=url, title=title)
+    assert a == b
 
 
 def test_parse_tradingview_cards():

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-import hashlib
 import re
 from urllib.parse import urljoin
 
@@ -10,6 +9,7 @@ from dateutil import parser as dtparser
 
 from ..base import Collector
 from ...config import settings
+from ...enrich.canonical import build_story_key
 from ...enrich.sentiment import vader_compound
 from ...enrich.tickers import extract_tickers
 from ...http.impersonate import ImpersonateHttpClient
@@ -86,6 +86,12 @@ def _parse_finviz_rows(html: str, max_items: int = 100):
     return out
 
 
+def _build_finviz_external_id(url: str, title: str) -> str:
+    # Stable identity: do not include relative age text, which changes every poll.
+    # This prevents old stories from resurfacing as "new" in continuous mode.
+    return build_story_key(title=title, url=url)
+
+
 class FinvizNewsCollector(Collector):
     name = "finviz_news"
 
@@ -112,8 +118,7 @@ class FinvizNewsCollector(Collector):
         for row in rows:
             text_for_enrich = f"{row['title']} {row.get('provider') or ''}".strip()
             parsed_time = _parse_finviz_time(row.get("age_text"), now=now)
-            key = "|".join([row["url"], row["title"], row.get("age_text") or ""])
-            external_id = hashlib.sha256(key.encode("utf-8")).hexdigest()
+            external_id = _build_finviz_external_id(url=row["url"], title=row["title"])
 
             inferred_tickers = sorted(set(row.get("tickers", []) + extract_tickers(text_for_enrich)))
             items.append(

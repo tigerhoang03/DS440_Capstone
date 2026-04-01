@@ -1,8 +1,11 @@
 import argparse
 import asyncio
+from collections import deque
 import logging
 
+from ..config import settings
 from ..logging import setup_logging
+from ..models.schema import NormalizedItem
 from ..queue.redis_streams import get_redis, publish_items
 from .finviz.collector import FinvizNewsCollector
 from .rss.demo import RssDemoCollector
@@ -28,11 +31,58 @@ COLLECTOR_GROUPS = {
     ],
 }
 
+_collector_instances: dict[str, object] = {}
+_collector_seen_ids: dict[str, set[str]] = {}
+_collector_seen_order: dict[str, deque[str]] = {}
+
+
+def _get_collector_instance(collector_name: str):
+    collector = _collector_instances.get(collector_name)
+    if collector is None:
+        collector = COLLECTORS[collector_name]()
+        _collector_instances[collector_name] = collector
+        _collector_seen_ids[collector_name] = set()
+        _collector_seen_order[collector_name] = deque()
+    return collector
+
+
+def _filter_new_items(
+    items: list[NormalizedItem],
+    seen_ids: set[str],
+    seen_order: deque[str],
+    max_cache_size: int,
+) -> tuple[list[NormalizedItem], int]:
+    out: list[NormalizedItem] = []
+    skipped = 0
+    for item in items:
+        key = item.external_id
+        if key in seen_ids:
+            skipped += 1
+            continue
+        out.append(item)
+        seen_ids.add(key)
+        seen_order.append(key)
+
+        while len(seen_order) > max_cache_size:
+            evicted = seen_order.popleft()
+            seen_ids.discard(evicted)
+    return out, skipped
+
 
 async def collect_single(collector_name: str):
-    collector = COLLECTORS[collector_name]()
+    collector = _get_collector_instance(collector_name)
     items = list(await collector.collect())
-    return collector_name, items
+    seen_ids = _collector_seen_ids[collector_name]
+    seen_order = _collector_seen_order[collector_name]
+    filtered_items, skipped = _filter_new_items(
+        items=items,
+        seen_ids=seen_ids,
+        seen_order=seen_order,
+        max_cache_size=settings.COLLECTOR_DELTA_CACHE_SIZE,
+    )
+    if skipped > 0:
+        log.info("Collector %s delta-filtered %d previously seen item(s)", collector_name, skipped)
+    return collector_name, filtered_items
 
 
 async def run_target(target: str):
