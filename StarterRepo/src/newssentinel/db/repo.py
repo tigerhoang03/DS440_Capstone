@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import String, cast, desc, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .tables import NewsItem
@@ -14,61 +15,76 @@ def _compute_publication_lag_sec(detected_at: datetime, published_at: datetime |
     return (detected_at - published_at).total_seconds()
 
 
-async def upsert_news_item(session: AsyncSession, item: NormalizedItem) -> NewsItem:
+def build_news_row_data(item: NormalizedItem) -> dict:
     canonical_url = canonicalize_url(item.url)
     story_key = build_story_key(item.title, item.url)
     publication_lag_sec = _compute_publication_lag_sec(item.detected_at, item.published_at)
+    return {
+        "source": item.source,
+        "source_type": item.source_type.value,
+        "external_id": item.external_id,
+        "url": item.url,
+        "canonical_url": canonical_url,
+        "story_key": story_key,
+        "match_method": "url_title_hash",
+        "published_at": item.published_at,
+        "detected_at": item.detected_at,
+        "publication_lag_sec": publication_lag_sec,
+        "title": item.title,
+        "summary": item.summary,
+        "content": item.content,
+        "tickers": item.tickers,
+        "author": item.author,
+        "language": item.language,
+        "sentiment": item.sentiment,
+        "sentiment_model": item.sentiment_model,
+        "raw": item.raw,
+    }
 
-    # per-source upsert (source + external_id), while preserving cross-source story_key linkage
-    existing = await session.scalar(
+
+async def upsert_news_items(session: AsyncSession, items: list[NormalizedItem]) -> int:
+    if not items:
+        return 0
+
+    rows = [build_news_row_data(item) for item in items]
+    stmt = pg_insert(NewsItem).values(rows)
+    excluded = stmt.excluded
+
+    upsert_stmt = stmt.on_conflict_do_update(
+        constraint="uq_source_external_id",
+        set_={
+            "source_type": excluded.source_type,
+            # Keep first detected_at for source/external_id; update mutable fields.
+            "url": func.coalesce(excluded.url, NewsItem.url),
+            "canonical_url": func.coalesce(excluded.canonical_url, NewsItem.canonical_url),
+            "story_key": excluded.story_key,
+            "match_method": excluded.match_method,
+            "published_at": func.coalesce(excluded.published_at, NewsItem.published_at),
+            "publication_lag_sec": func.coalesce(excluded.publication_lag_sec, NewsItem.publication_lag_sec),
+            "title": func.coalesce(excluded.title, NewsItem.title),
+            "summary": func.coalesce(excluded.summary, NewsItem.summary),
+            "content": func.coalesce(excluded.content, NewsItem.content),
+            "tickers": func.coalesce(excluded.tickers, NewsItem.tickers),
+            "author": func.coalesce(excluded.author, NewsItem.author),
+            "language": func.coalesce(excluded.language, NewsItem.language),
+            "sentiment": func.coalesce(excluded.sentiment, NewsItem.sentiment),
+            "sentiment_model": func.coalesce(excluded.sentiment_model, NewsItem.sentiment_model),
+            "raw": func.coalesce(excluded.raw, NewsItem.raw),
+        },
+    )
+    await session.execute(upsert_stmt)
+    return len(items)
+
+
+async def upsert_news_item(session: AsyncSession, item: NormalizedItem) -> NewsItem:
+    # Compatibility wrapper for one-off calls.
+    await upsert_news_items(session, [item])
+    await session.commit()
+    row = await session.scalar(
         select(NewsItem).where(NewsItem.source == item.source, NewsItem.external_id == item.external_id)
     )
-    if existing:
-        # keep first detected_at for this source+external_id; update other fields incrementally
-        existing.url = item.url or existing.url
-        existing.canonical_url = canonical_url or existing.canonical_url
-        existing.story_key = story_key
-        existing.match_method = "url_title_hash"
-        existing.published_at = item.published_at or existing.published_at
-        existing.publication_lag_sec = (
-            publication_lag_sec if publication_lag_sec is not None else existing.publication_lag_sec
-        )
-        existing.title = item.title or existing.title
-        existing.summary = item.summary or existing.summary
-        existing.content = item.content or existing.content
-        existing.tickers = item.tickers or existing.tickers
-        existing.sentiment = item.sentiment if item.sentiment is not None else existing.sentiment
-        existing.sentiment_model = item.sentiment_model or existing.sentiment_model
-        existing.raw = {**(existing.raw or {}), **(item.raw or {})}
-        session.add(existing)
-        await session.commit()
-        await session.refresh(existing)
-        return existing
-
-    row = NewsItem(
-        source=item.source,
-        source_type=item.source_type.value,
-        external_id=item.external_id,
-        url=item.url,
-        canonical_url=canonical_url,
-        story_key=story_key,
-        match_method="url_title_hash",
-        published_at=item.published_at,
-        detected_at=item.detected_at,
-        publication_lag_sec=publication_lag_sec,
-        title=item.title,
-        summary=item.summary,
-        content=item.content,
-        tickers=item.tickers,
-        author=item.author,
-        language=item.language,
-        sentiment=item.sentiment,
-        sentiment_model=item.sentiment_model,
-        raw=item.raw,
-    )
-    session.add(row)
-    await session.commit()
-    await session.refresh(row)
+    if row is None:
+        raise RuntimeError("Upsert did not persist row")
     return row
 
 async def list_latest(session: AsyncSession, limit: int = 200, source: str | None = None):
