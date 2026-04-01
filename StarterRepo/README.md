@@ -68,6 +68,11 @@ python -m newssentinel.collectors.run --collector finviz_news
 python -m newssentinel.collectors.run --collector tradingview_news
 ```
 
+### Run all live news collectors in parallel
+```bash
+python -m newssentinel.collectors.run --collector all_live_news
+```
+
 ### Run the dashboard
 ```bash
 streamlit run src/newssentinel/dashboard/app.py
