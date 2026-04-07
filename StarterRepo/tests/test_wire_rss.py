@@ -1,4 +1,9 @@
-from newssentinel.collectors.rss.wires import _discover_rss_links, _normalize_source_name
+from newssentinel.collectors.rss.wires import (
+    _build_conditional_headers,
+    _discover_rss_links,
+    _normalize_source_name,
+    _update_feed_http_cache,
+)
 
 
 def test_discover_rss_links_from_listing_page():
@@ -39,3 +44,33 @@ def test_discover_rss_links_from_js_window_location():
         max_links=10,
     )
     assert links == ["https://www.prnewswire.com/rss/news-releases-list.rss"]
+
+
+def test_build_conditional_headers_from_cache():
+    headers = _build_conditional_headers(
+        {"etag": '"abc123"', "last_modified": "Mon, 01 Jan 2026 00:00:00 GMT"}
+    )
+    assert headers == {
+        "If-None-Match": '"abc123"',
+        "If-Modified-Since": "Mon, 01 Jan 2026 00:00:00 GMT",
+    }
+
+
+def test_update_feed_http_cache_writes_only_when_headers_present():
+    cache: dict[str, dict[str, str]] = {}
+    feed_url = "https://example.com/feed.xml"
+    _update_feed_http_cache(cache=cache, feed_url=feed_url, response_headers={})
+    assert feed_url not in cache
+
+    _update_feed_http_cache(
+        cache=cache,
+        feed_url=feed_url,
+        response_headers={
+            "ETag": '"etag-1"',
+            "Last-Modified": "Tue, 02 Jan 2026 00:00:00 GMT",
+        },
+    )
+    assert cache[feed_url] == {
+        "etag": '"etag-1"',
+        "last_modified": "Tue, 02 Jan 2026 00:00:00 GMT",
+    }

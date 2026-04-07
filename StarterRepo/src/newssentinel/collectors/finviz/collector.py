@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import hashlib
 import re
 from urllib.parse import urljoin
 
@@ -98,6 +99,7 @@ class FinvizNewsCollector(Collector):
     def __init__(self, url: str | None = None, max_items: int | None = None):
         self.url = url or settings.FINVIZ_NEWS_URL
         self.max_items = max_items or settings.FINVIZ_MAX_ITEMS
+        self._last_rows_hash: str | None = None
         self.client = ImpersonateHttpClient(
             impersonate=settings.CURL_IMPERSONATE_PROFILE,
             timeout=settings.CURL_IMPERSONATE_TIMEOUT_SEC,
@@ -109,10 +111,18 @@ class FinvizNewsCollector(Collector):
             headers={
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Referer": "https://finviz.com/",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
             },
         )
 
         rows = _parse_finviz_rows(html, max_items=self.max_items)
+        snapshot = "|".join(_build_finviz_external_id(url=row["url"], title=row["title"]) for row in rows)
+        rows_hash = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()
+        if rows_hash == self._last_rows_hash:
+            return []
+        self._last_rows_hash = rows_hash
+
         now = datetime.utcnow()
         items: list[NormalizedItem] = []
         for row in rows:

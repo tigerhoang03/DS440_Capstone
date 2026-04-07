@@ -40,6 +40,34 @@ def _normalize_source_name(source_url: str) -> str:
     return "wire_rss"
 
 
+def _build_conditional_headers(feed_http_cache: dict[str, str] | None) -> dict[str, str]:
+    if not feed_http_cache:
+        return {}
+    headers: dict[str, str] = {}
+    etag = feed_http_cache.get("etag")
+    if etag:
+        headers["If-None-Match"] = etag
+    last_modified = feed_http_cache.get("last_modified")
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
+    return headers
+
+
+def _update_feed_http_cache(
+    cache: dict[str, dict[str, str]],
+    feed_url: str,
+    response_headers: dict[str, str],
+) -> None:
+    etag = response_headers.get("ETag")
+    last_modified = response_headers.get("Last-Modified")
+    if not etag and not last_modified:
+        return
+    cache[feed_url] = {
+        "etag": etag or "",
+        "last_modified": last_modified or "",
+    }
+
+
 def _discover_rss_links(listing_url: str, html: str, max_links: int) -> list[str]:
     soup = BeautifulSoup(html, "lxml")
     links: list[str] = []
@@ -105,6 +133,7 @@ class WireSitesRssCollector(Collector):
         )
         self.max_feeds_per_source = max_feeds_per_source or settings.WIRE_RSS_MAX_FEEDS_PER_SOURCE
         self.max_items_per_feed = max_items_per_feed or settings.WIRE_RSS_MAX_ITEMS_PER_FEED
+        self._feed_http_cache: dict[str, dict[str, str]] = {}
 
     async def _resolve_feed_urls(self, client: httpx.AsyncClient, source_url: str) -> list[str]:
         r = await client.get(source_url, follow_redirects=True)
@@ -180,8 +209,16 @@ class WireSitesRssCollector(Collector):
 
                 for feed_url in feed_urls:
                     try:
-                        r = await client.get(feed_url, follow_redirects=True)
+                        request_headers = _build_conditional_headers(self._feed_http_cache.get(feed_url))
+                        r = await client.get(feed_url, follow_redirects=True, headers=request_headers)
+                        if r.status_code == 304:
+                            continue
                         r.raise_for_status()
+                        _update_feed_http_cache(
+                            cache=self._feed_http_cache,
+                            feed_url=feed_url,
+                            response_headers=dict(r.headers),
+                        )
 
                         parsed = feedparser.parse(r.text)
                         feed_title = parsed.feed.get("title")

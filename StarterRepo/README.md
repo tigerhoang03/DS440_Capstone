@@ -65,7 +65,11 @@ python -m newssentinel.collectors.run --collector finviz_news
 
 ### Run the TradingView collector (curl impersonate)
 ```bash
+# live mode (freshness gated)
 python -m newssentinel.collectors.run --collector tradingview_news
+
+# optional backfill mode (includes older TradingView items)
+python -m newssentinel.collectors.run --collector tradingview_news_backfill
 ```
 
 ### Run all live news collectors in parallel
@@ -75,7 +79,19 @@ python -m newssentinel.collectors.run --collector all_live_news
 
 ### Run collectors continuously (low-lag mode)
 ```bash
-# all live collectors every 5 seconds
+# all live collectors under one command.
+# each source runs independently with its own interval:
+# - FINVIZ_NEWS_INTERVAL_SEC (default 2s)
+# - TRADINGVIEW_NEWS_INTERVAL_SEC (default 2s)
+# - WIRE_SITES_RSS_INTERVAL_SEC (default 5s)
+# TradingView live freshness gate:
+# - TRADINGVIEW_LIVE_MAX_PUBLISHED_AGE_SEC (default 600s)
+# - TRADINGVIEW_LIVE_MAX_ITEMS (default 40)
+# - TRADINGVIEW_LIVE_INCLUDE_UNKNOWN_PUBLISHED (default false)
+# stateful delta cache is persisted across restarts by default:
+# - COLLECTOR_STATE_ENABLED=true
+# - COLLECTOR_STATE_DIR=.collector_state
+# --interval-sec acts as fallback for any source without a specific interval env var.
 python -m newssentinel.collectors.run --collector all_live_news --interval-sec 5
 
 # single collector every 10 seconds

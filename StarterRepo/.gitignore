@@ -20,3 +20,6 @@ dist/
 # Environment/config secrets
 .env
 .env.*
+
+# Collector runtime state
+.collector_state/

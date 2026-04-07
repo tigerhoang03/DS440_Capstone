@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     REDIS_CONSUMER_GROUP: str = "ingest_group"
     REDIS_CONSUMER_NAME: str = "ingest_1"
     COLLECTOR_DELTA_CACHE_SIZE: int = 50000
+    COLLECTOR_STATE_ENABLED: bool = True
+    COLLECTOR_STATE_DIR: str = ".collector_state"
+    FINVIZ_NEWS_INTERVAL_SEC: float = 2.0
+    TRADINGVIEW_NEWS_INTERVAL_SEC: float = 2.0
+    WIRE_SITES_RSS_INTERVAL_SEC: float = 5.0
     INGEST_BATCH_SIZE: int = 200
     INGEST_BLOCK_MS: int = 250
 
@@ -39,6 +44,9 @@ class Settings(BaseSettings):
     TRADINGVIEW_NEWS_FLOW_URL: str = "https://www.tradingview.com/news-flow/"
     TRADINGVIEW_NEWS_FALLBACK_URL: str = "https://www.tradingview.com/news/"
     TRADINGVIEW_MAX_ITEMS: int = 120
+    TRADINGVIEW_LIVE_MAX_ITEMS: int = 40
+    TRADINGVIEW_LIVE_MAX_PUBLISHED_AGE_SEC: int = 600
+    TRADINGVIEW_LIVE_INCLUDE_UNKNOWN_PUBLISHED: bool = False
 
     @property
     def postgres_dsn(self) -> str:

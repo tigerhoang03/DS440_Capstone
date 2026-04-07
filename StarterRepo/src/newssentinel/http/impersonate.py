@@ -14,6 +14,7 @@ class ImpersonateHttpClient:
     def __init__(self, impersonate: str = "chrome", timeout: int = 30):
         self.impersonate = impersonate
         self.timeout = timeout
+        self._session = requests.Session()
 
     async def get_json(self, url: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None):
         response = await self._request("GET", url, params=params, headers=headers)
@@ -31,7 +32,7 @@ class ImpersonateHttpClient:
         headers: dict[str, str] | None = None,
     ):
         def _do_request():
-            return requests.request(
+            return self._session.request(
                 method,
                 url,
                 params=params,
