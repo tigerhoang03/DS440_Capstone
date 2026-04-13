@@ -95,31 +95,66 @@ async def list_latest(session: AsyncSession, limit: int = 200, source: str | Non
     return rows
 
 
-async def list_latest_dedup(session: AsyncSession, limit: int = 200, source: str | None = None):
-    # Coalesce null story keys (legacy rows) to unique IDs to avoid collapsing everything null.
-    partition_key = func.coalesce(NewsItem.story_key, cast(NewsItem.id, String))
-    ranked = select(
-        NewsItem.id.label("id"),
-        func.row_number()
-        .over(
-            partition_by=partition_key,
-            order_by=(desc(NewsItem.detected_at), desc(NewsItem.id)),
-        )
-        .label("rn"),
-    )
+def _filtered_news_select(
+    source: str | None = None,
+    detected_after: datetime | None = None,
+    detected_before: datetime | None = None,
+):
+    stmt = select(NewsItem)
     if source:
-        ranked = ranked.where(NewsItem.source == source)
-    ranked_sq = ranked.subquery()
+        stmt = stmt.where(NewsItem.source == source)
+    if detected_after:
+        stmt = stmt.where(NewsItem.detected_at >= detected_after)
+    if detected_before:
+        stmt = stmt.where(NewsItem.detected_at < detected_before)
+    return stmt
 
-    q = (
+
+async def list_latest_dedup(session: AsyncSession, limit: int = 200, source: str | None = None):
+    return await list_news_filtered(session, limit=limit, source=source, dedup=True)
+
+
+async def list_news_filtered(
+    session: AsyncSession,
+    limit: int = 200,
+    source: str | None = None,
+    detected_after: datetime | None = None,
+    detected_before: datetime | None = None,
+    dedup: bool = True,
+):
+    base_stmt = _filtered_news_select(
+        source=source,
+        detected_after=detected_after,
+        detected_before=detected_before,
+    )
+
+    if not dedup:
+        stmt = base_stmt.order_by(desc(NewsItem.detected_at), desc(NewsItem.id)).limit(limit)
+        return (await session.execute(stmt)).scalars().all()
+
+    filtered_sq = base_stmt.subquery()
+    partition_key = func.coalesce(filtered_sq.c.story_key, cast(filtered_sq.c.id, String))
+    ranked_sq = (
+        select(
+            filtered_sq.c.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=partition_key,
+                order_by=(desc(filtered_sq.c.detected_at), desc(filtered_sq.c.id)),
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
+    stmt = (
         select(NewsItem)
         .join(ranked_sq, NewsItem.id == ranked_sq.c.id)
         .where(ranked_sq.c.rn == 1)
         .order_by(desc(NewsItem.detected_at), desc(NewsItem.id))
         .limit(limit)
     )
-    rows = (await session.execute(q)).scalars().all()
-    return rows
+    return (await session.execute(stmt)).scalars().all()
 
 
 async def source_lag_metrics(session: AsyncSession, source: str | None = None):

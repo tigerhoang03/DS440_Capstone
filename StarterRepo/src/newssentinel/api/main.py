@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import FastAPI, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.session import get_session
-from ..db.repo import list_latest, list_latest_dedup, source_lag_metrics
+from ..db.repo import list_news_filtered, source_lag_metrics
 
 app = FastAPI(title="NewsSentinel API", version="0.1.0")
 
@@ -43,6 +43,98 @@ def _live_sort_key(row, now: datetime):
         detected_age,
     )
 
+
+def _parse_tickers_param(tickers: str | None) -> list[str]:
+    if not tickers:
+        return []
+    out = []
+    for token in tickers.split(","):
+        normalized = token.strip().upper()
+        if normalized:
+            out.append(normalized)
+    return out
+
+
+def _looks_like_ticker(token: str | None) -> str | None:
+    if not token:
+        return None
+    normalized = token.strip().upper()
+    if not normalized:
+        return None
+    candidate = normalized.replace(".", "").replace("-", "")
+    if 1 <= len(normalized) <= 8 and candidate.isalnum():
+        return normalized
+    return None
+
+
+def _string_match(value: str | None, needle: str) -> bool:
+    return bool(value and needle in value.lower())
+
+
+def _row_matches_filters(
+    row,
+    q: str | None,
+    tickers: list[str],
+    headline_keyword: str | None,
+    detected_after: datetime | None,
+    detected_before: datetime | None,
+) -> bool:
+    if detected_after is not None and row.detected_at < detected_after:
+        return False
+    if detected_before is not None and row.detected_at >= detected_before:
+        return False
+    row_tickers = {ticker.upper() for ticker in (row.tickers or [])}
+    if tickers and not any(ticker in row_tickers for ticker in tickers):
+        return False
+    if headline_keyword:
+        title = (row.title or "").lower()
+        if headline_keyword.lower() not in title:
+            return False
+    if not q:
+        return True
+    q_lower = q.lower()
+    q_ticker = _looks_like_ticker(q)
+    return any(
+        [
+            q_ticker is not None and q_ticker in row_tickers,
+            _string_match(row.title, q_lower),
+            _string_match(row.summary, q_lower),
+            _string_match(row.source, q_lower),
+        ]
+    )
+
+
+def _detected_sort_key(row):
+    return (row.detected_at, row.id)
+
+
+def _search_sort_key(row, now: datetime, q: str | None, tickers: list[str], rank_mode: str):
+    row_tickers = {ticker.upper() for ticker in (row.tickers or [])}
+    q_lower = (q or "").strip().lower()
+    q_ticker = _looks_like_ticker(q)
+
+    ticker_rank = 0 if (tickers and any(ticker in row_tickers for ticker in tickers)) else 1
+    if not tickers:
+        ticker_rank = 0 if (q_ticker and q_ticker in row_tickers) else 1
+
+    title_rank = 0 if q_lower and _string_match(row.title, q_lower) else 1
+    summary_rank = 0 if q_lower and _string_match(row.summary, q_lower) else 1
+    source_rank = 0 if q_lower and _string_match(row.source, q_lower) else 1
+
+    base_rank = _live_sort_key(row, now) if rank_mode == "live" else (
+        0,
+        0,
+        0,
+        -row.detected_at.timestamp(),
+    )
+    return (
+        ticker_rank,
+        title_rank,
+        summary_rank,
+        source_rank,
+        *base_rank,
+    )
+
 @app.get("/health")
 async def health():
     return {"ok": True}
@@ -51,20 +143,42 @@ async def health():
 async def news_latest(
     limit: int = Query(200, ge=1, le=1000),
     source: str | None = None,
+    q: str | None = None,
+    tickers: str | None = None,
+    headline_keyword: str | None = None,
+    detected_after: datetime | None = None,
+    detected_before: datetime | None = None,
     dedup: bool = True,
     rank_mode: Literal["live", "detected"] = "live",
     session: AsyncSession = Depends(get_session),
 ):
-    rows = (
-        await list_latest_dedup(session, limit=limit, source=source)
-        if dedup
-        else await list_latest(session, limit=limit, source=source)
+    ticker_filters = _parse_tickers_param(tickers)
+    rows = await list_news_filtered(
+        session,
+        limit=limit,
+        source=source,
+        detected_after=detected_after,
+        detected_before=detected_before,
+        dedup=dedup,
     )
     now = datetime.utcnow()
-    if rank_mode == "live":
+    rows = [
+        row for row in rows
+        if _row_matches_filters(
+            row=row,
+            q=q,
+            tickers=ticker_filters,
+            headline_keyword=headline_keyword,
+            detected_after=detected_after,
+            detected_before=detected_before,
+        )
+    ]
+    if q or ticker_filters or headline_keyword:
+        rows = sorted(rows, key=lambda r: _search_sort_key(r, now, q, ticker_filters, rank_mode))
+    elif rank_mode == "live":
         rows = sorted(rows, key=lambda r: _live_sort_key(r, now))
     else:
-        rows = sorted(rows, key=lambda r: r.detected_at, reverse=True)
+        rows = sorted(rows, key=_detected_sort_key, reverse=True)
     rows = rows[:limit]
 
     # return a lean payload for dashboard
