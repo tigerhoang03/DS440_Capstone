@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import String, case, cast, desc, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -13,7 +13,7 @@ from ..models.schema import NormalizedItem
 def _compute_publication_lag_sec(detected_at: datetime, published_at: datetime | None) -> float | None:
     if not published_at:
         return None
-    return (detected_at - published_at).total_seconds()
+    return max((detected_at - published_at).total_seconds(), 0.0)
 
 
 def build_news_row_data(item: NormalizedItem) -> dict:
@@ -208,14 +208,20 @@ async def update_news_sentiment(
     await session.execute(stmt)
 
 
-async def source_lag_metrics(session: AsyncSession, source: str | None = None):
+async def source_lag_metrics(
+    session: AsyncSession,
+    source: str | None = None,
+    detected_after: datetime | None = None,
+    detected_before: datetime | None = None,
+):
+    safe_lag = func.greatest(NewsItem.publication_lag_sec, 0.0)
     q = (
         select(
             NewsItem.source.label("source"),
             func.count(NewsItem.id).label("item_count"),
-            func.avg(NewsItem.publication_lag_sec).label("avg_publication_lag_sec"),
-            func.min(NewsItem.publication_lag_sec).label("min_publication_lag_sec"),
-            func.max(NewsItem.publication_lag_sec).label("max_publication_lag_sec"),
+            func.avg(safe_lag).label("avg_publication_lag_sec"),
+            func.min(safe_lag).label("min_publication_lag_sec"),
+            func.max(safe_lag).label("max_publication_lag_sec"),
         )
         .where(NewsItem.publication_lag_sec.is_not(None))
         .group_by(NewsItem.source)
@@ -223,5 +229,49 @@ async def source_lag_metrics(session: AsyncSession, source: str | None = None):
     )
     if source:
         q = q.where(NewsItem.source == source)
+    if detected_after:
+        q = q.where(NewsItem.detected_at >= detected_after)
+    if detected_before:
+        q = q.where(NewsItem.detected_at < detected_before)
     rows = (await session.execute(q)).all()
     return rows
+
+
+async def source_health_metrics(
+    session: AsyncSession,
+    source: str | None = None,
+    detected_after: datetime | None = None,
+    detected_before: datetime | None = None,
+    now: datetime | None = None,
+):
+    now = now or datetime.utcnow()
+    one_minute_ago = now - timedelta(minutes=1)
+    five_minutes_ago = now - timedelta(minutes=5)
+    fifteen_minutes_ago = now - timedelta(minutes=15)
+    safe_lag = func.greatest(NewsItem.publication_lag_sec, 0.0)
+
+    q = select(
+        NewsItem.source.label("source"),
+        func.count(NewsItem.id).label("total_items"),
+        func.max(NewsItem.detected_at).label("latest_detected_at"),
+        func.max(NewsItem.published_at).label("latest_published_at"),
+        func.sum(case((NewsItem.detected_at >= one_minute_ago, 1), else_=0)).label("items_last_1m"),
+        func.sum(case((NewsItem.detected_at >= five_minutes_ago, 1), else_=0)).label("items_last_5m"),
+        func.sum(case((NewsItem.detected_at >= fifteen_minutes_ago, 1), else_=0)).label("items_last_15m"),
+        func.avg(
+            case(
+                (NewsItem.detected_at >= fifteen_minutes_ago, safe_lag),
+                else_=None,
+            )
+        ).label("avg_lag_last_15m_sec"),
+    ).group_by(NewsItem.source)
+
+    if source:
+        q = q.where(NewsItem.source == source)
+    if detected_after:
+        q = q.where(NewsItem.detected_at >= detected_after)
+    if detected_before:
+        q = q.where(NewsItem.detected_at < detected_before)
+
+    q = q.order_by(desc(func.max(NewsItem.detected_at)))
+    return (await session.execute(q)).all()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 
+import altair as alt
 import httpx
 import pandas as pd
 import streamlit as st
@@ -184,10 +185,18 @@ def fetch_news(api_base: str, **params):
         return response.json()
 
 
-def fetch_source_lag(api_base: str, source: str | None = None):
-    params = {"source": source} if source else {}
+def fetch_source_lag(api_base: str, **params):
+    clean_params = {key: value for key, value in params.items() if value not in (None, "", [])}
     with httpx.Client(timeout=8) as client:
-        response = client.get(f"{api_base}/metrics/source-lag", params=params)
+        response = client.get(f"{api_base}/metrics/source-lag", params=clean_params)
+        response.raise_for_status()
+        return response.json()
+
+
+def fetch_source_health(api_base: str, **params):
+    clean_params = {key: value for key, value in params.items() if value not in (None, "", [])}
+    with httpx.Client(timeout=8) as client:
+        response = client.get(f"{api_base}/metrics/source-health", params=clean_params)
         response.raise_for_status()
         return response.json()
 
@@ -202,6 +211,29 @@ def prepare_news_df(records: list[dict]) -> pd.DataFrame:
     for column in ["publication_lag_sec", "detected_age_sec", "published_age_sec", "sentiment"]:
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
+    if "publication_lag_sec" in df.columns:
+        df["publication_lag_sec"] = df["publication_lag_sec"].clip(lower=0)
+    return df
+
+
+def prepare_health_df(records: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(records)
+    if df.empty:
+        return df
+    parse_datetime_col(df, "latest_detected_at")
+    parse_datetime_col(df, "latest_published_at")
+    for column in [
+        "total_items",
+        "latest_detected_age_sec",
+        "items_last_1m",
+        "items_last_5m",
+        "items_last_15m",
+        "avg_lag_last_15m_sec",
+    ]:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+    if "avg_lag_last_15m_sec" in df.columns:
+        df["avg_lag_last_15m_sec"] = df["avg_lag_last_15m_sec"].clip(lower=0)
     return df
 
 
@@ -269,7 +301,21 @@ def _format_lag(value) -> str:
     numeric = pd.to_numeric(value, errors="coerce")
     if pd.isna(numeric):
         return "-"
-    return f"{int(round(float(numeric)))} sec"
+    return _format_duration(float(numeric))
+
+
+def _format_duration(seconds: float | int | None) -> str:
+    numeric = pd.to_numeric(seconds, errors="coerce")
+    if pd.isna(numeric):
+        return "-"
+    seconds_float = max(float(numeric), 0.0)
+    if seconds_float < 60:
+        return f"{seconds_float:.0f}s"
+    if seconds_float < 3600:
+        return f"{seconds_float / 60:.1f}m"
+    if seconds_float < 86400:
+        return f"{seconds_float / 3600:.1f}h"
+    return f"{seconds_float / 86400:.1f}d"
 
 
 def _format_story_option(df: pd.DataFrame, item_id: int) -> str:
@@ -284,17 +330,75 @@ def render_feed_tab(df: pd.DataFrame, empty_message: str, key_prefix: str) -> No
         st.info(empty_message)
         return
     table = build_feed_table(df)
-    st.dataframe(table, use_container_width=True, hide_index=True, height=470)
+    st.dataframe(table, width="stretch", hide_index=True, height=470)
     render_detail_panel(df, key_prefix)
 
 
-def render_metrics_tab(news_df: pd.DataFrame, lag_df: pd.DataFrame) -> None:
-    render_section_header("Source Metrics", "Latency, sentiment, and throughput snapshots across sources.")
+def render_system_health_panel(health_df: pd.DataFrame) -> None:
+    render_section_header(
+        "System Health",
+        "Session-scoped collector status from live Postgres detections and recent ingest activity.",
+    )
+
+    if health_df.empty:
+        st.info("No source health data yet. Start collectors and the ingest worker to populate this panel.")
+        return
+
+    active_sources = int((health_df["status"] == "active").sum()) if "status" in health_df else 0
+    quiet_sources = int((health_df["status"] == "quiet").sum()) if "status" in health_df else 0
+    stale_sources = int((health_df["status"] == "stale").sum()) if "status" in health_df else 0
+    latest_age = (
+        health_df["latest_detected_age_sec"].dropna().min()
+        if "latest_detected_age_sec" in health_df
+        else None
+    )
+    items_last_1m = int(health_df["items_last_1m"].fillna(0).sum())
+    items_last_5m = int(health_df["items_last_5m"].fillna(0).sum())
+    items_last_15m = int(health_df["items_last_15m"].fillna(0).sum())
+
+    h1, h2, h3, h4 = st.columns(4)
+    with h1:
+        st.metric("Active sources", active_sources, delta=f"{quiet_sources} quiet / {stale_sources} stale")
+    with h2:
+        st.metric("Ingest last 1m", items_last_1m)
+    with h3:
+        st.metric("Ingest last 5m", items_last_5m, delta=f"{items_last_15m} in 15m")
+    with h4:
+        st.metric("Latest detection", _format_duration(latest_age))
+
+    table = pd.DataFrame(
+        {
+            "Source": health_df["source"],
+            "Status": health_df["status"].astype(str).str.upper(),
+            "Latest detected": health_df["latest_detected_recency"].fillna("-"),
+            "Ingest age": health_df["latest_detected_age_sec"].apply(_format_duration),
+            "Last 1m": health_df["items_last_1m"].fillna(0).astype(int),
+            "Last 5m": health_df["items_last_5m"].fillna(0).astype(int),
+            "Last 15m": health_df["items_last_15m"].fillna(0).astype(int),
+            "Avg lag 15m": health_df["avg_lag_last_15m_sec"].apply(_format_duration),
+            "Total": health_df["total_items"].fillna(0).astype(int),
+        }
+    )
+    st.dataframe(
+        table,
+        width="stretch",
+        hide_index=True,
+        height=min(280, 60 + 36 * max(len(table), 1)),
+    )
+
+
+def render_metrics_tab(news_df: pd.DataFrame, lag_df: pd.DataFrame, health_df: pd.DataFrame) -> None:
+    render_section_header(
+        "Source Metrics",
+        "Session-scoped latency, sentiment, and throughput for live rows only.",
+    )
+    render_system_health_panel(health_df)
 
     if not lag_df.empty:
         for column in ["avg_publication_lag_sec", "min_publication_lag_sec", "max_publication_lag_sec"]:
             if column in lag_df.columns:
                 lag_df[column] = pd.to_numeric(lag_df[column], errors="coerce")
+                lag_df[column] = lag_df[column].clip(lower=0)
         lag_df = lag_df.dropna(subset=["avg_publication_lag_sec"]).sort_values("avg_publication_lag_sec")
 
     k1, k2, k3 = st.columns(3)
@@ -305,7 +409,9 @@ def render_metrics_tab(news_df: pd.DataFrame, lag_df: pd.DataFrame) -> None:
             st.metric("Slowest source", "-")
         with k3:
             st.metric("Avg lag", "-")
-        st.info("Lag metrics will appear once sources publish items with both detected and published timestamps.")
+        st.info(
+            "Session lag metrics will appear once live rows arrive after this dashboard session starts."
+        )
     else:
         with k1:
             st.metric("Fastest source", str(lag_df.iloc[0]["source"]))
@@ -313,10 +419,48 @@ def render_metrics_tab(news_df: pd.DataFrame, lag_df: pd.DataFrame) -> None:
             st.metric("Slowest source", str(lag_df.iloc[-1]["source"]))
         with k3:
             st.metric("Avg lag", f"{float(lag_df['avg_publication_lag_sec'].mean()):.1f} sec")
-        st.bar_chart(lag_df, x="source", y="avg_publication_lag_sec")
+        lag_plot = lag_df.rename(
+            columns={
+                "avg_publication_lag_sec": "Average lag (sec)",
+                "min_publication_lag_sec": "Best lag (sec)",
+                "max_publication_lag_sec": "Worst lag (sec)",
+                "item_count": "Rows",
+                "source": "Source",
+            }
+        )
+        lag_chart = (
+            alt.Chart(lag_plot)
+            .mark_bar(cornerRadiusEnd=5)
+            .encode(
+                x=alt.X("Average lag (sec):Q", title="Average publication lag"),
+                y=alt.Y("Source:N", sort="x", title=None),
+                color=alt.Color("Source:N", legend=None, scale=alt.Scale(scheme="tealblues")),
+                tooltip=[
+                    alt.Tooltip("Source:N"),
+                    alt.Tooltip("Rows:Q", format=","),
+                    alt.Tooltip("Average lag (sec):Q", format=",.1f"),
+                    alt.Tooltip("Best lag (sec):Q", format=",.1f"),
+                    alt.Tooltip("Worst lag (sec):Q", format=",.1f"),
+                ],
+            )
+            .properties(height=max(220, 42 * len(lag_plot)))
+        )
+        st.altair_chart(lag_chart, width="stretch")
+        lag_table = lag_df[
+            [
+                "source",
+                "item_count",
+                "avg_publication_lag_sec",
+                "min_publication_lag_sec",
+                "max_publication_lag_sec",
+            ]
+        ].copy()
+        lag_table.columns = ["Source", "Rows", "Avg lag", "Best lag", "Worst lag"]
+        for column in ["Avg lag", "Best lag", "Worst lag"]:
+            lag_table[column] = lag_table[column].apply(_format_duration)
         st.dataframe(
-            lag_df[["source", "item_count", "avg_publication_lag_sec", "min_publication_lag_sec", "max_publication_lag_sec"]],
-            use_container_width=True,
+            lag_table,
+            width="stretch",
             hide_index=True,
             height=260,
         )
@@ -333,14 +477,52 @@ def render_metrics_tab(news_df: pd.DataFrame, lag_df: pd.DataFrame) -> None:
         if sentiment_df.empty:
             st.info("No sentiment values available yet.")
         else:
-            sentiment_df = sentiment_df.set_index("detected_at").resample("1min")["sentiment"].mean().reset_index()
-            st.line_chart(sentiment_df, x="detected_at", y="sentiment")
+            sentiment_df = (
+                sentiment_df.set_index("detected_at")
+                .resample("1min")["sentiment"]
+                .mean()
+                .reset_index()
+                .dropna()
+            )
+            sentiment_chart = (
+                alt.Chart(sentiment_df)
+                .mark_line(point=True, color="#27d3a7")
+                .encode(
+                    x=alt.X("detected_at:T", title="Detected minute"),
+                    y=alt.Y("sentiment:Q", title="Avg sentiment", scale=alt.Scale(domain=[-1, 1])),
+                    tooltip=[
+                        alt.Tooltip("detected_at:T", title="Minute"),
+                        alt.Tooltip("sentiment:Q", title="Avg sentiment", format=".3f"),
+                    ],
+                )
+                .properties(height=260)
+            )
+            st.altair_chart(sentiment_chart, width="stretch")
     with c2:
         render_section_header("Item Throughput", "Detected item count by minute.")
-        count_df = chart_df.copy()
+        count_df = chart_df[["detected_at", "source"]].copy()
         count_df["count"] = 1
-        count_df = count_df.set_index("detected_at").resample("1min")["count"].sum().reset_index()
-        st.line_chart(count_df, x="detected_at", y="count")
+        count_df = (
+            count_df.groupby([pd.Grouper(key="detected_at", freq="1min"), "source"])["count"]
+            .sum()
+            .reset_index()
+        )
+        throughput_chart = (
+            alt.Chart(count_df)
+            .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+            .encode(
+                x=alt.X("detected_at:T", title="Detected minute"),
+                y=alt.Y("count:Q", title="Items"),
+                color=alt.Color("source:N", title="Source", scale=alt.Scale(scheme="tableau20")),
+                tooltip=[
+                    alt.Tooltip("detected_at:T", title="Minute"),
+                    alt.Tooltip("source:N", title="Source"),
+                    alt.Tooltip("count:Q", title="Items", format=","),
+                ],
+            )
+            .properties(height=260)
+        )
+        st.altair_chart(throughput_chart, width="stretch")
 
 
 inject_styles()
@@ -393,12 +575,22 @@ metrics_records = fetch_news(
     rank_mode="detected",
     dedup=True,
 )
-lag_records = fetch_source_lag(api_base, source=global_source.strip() or None)
+lag_records = fetch_source_lag(
+    api_base,
+    source=global_source.strip() or None,
+    detected_after=session_started_at_iso,
+)
+health_records = fetch_source_health(
+    api_base,
+    source=global_source.strip() or None,
+    detected_after=session_started_at_iso,
+)
 
 live_df = prepare_news_df(live_records)
 archive_df = prepare_news_df(archive_records)
 metrics_df = prepare_news_df(metrics_records)
 lag_df = pd.DataFrame(lag_records)
+health_df = prepare_health_df(health_records)
 
 k1, k2, k3, k4 = st.columns(4)
 with k1:
@@ -479,7 +671,7 @@ with search_tab:
     )
 
 with metrics_tab:
-    render_metrics_tab(metrics_df, lag_df)
+    render_metrics_tab(metrics_df, lag_df, health_df)
 
 with archive_tab:
     render_section_header(

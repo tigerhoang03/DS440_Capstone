@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import FastAPI, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.session import get_session
-from ..db.repo import list_news_filtered, source_lag_metrics
+from ..db.repo import list_news_filtered, source_health_metrics, source_lag_metrics
 
 app = FastAPI(title="NewsSentinel API", version="0.1.0")
 
@@ -13,6 +13,12 @@ def _age_sec(ts: datetime | None, now: datetime) -> float | None:
     if ts is None:
         return None
     return max((now - ts).total_seconds(), 0.0)
+
+
+def _lag_sec(value: float | int | None) -> float | None:
+    if value is None:
+        return None
+    return max(float(value), 0.0)
 
 
 def _humanize_age(seconds: float | None) -> str | None:
@@ -30,7 +36,8 @@ def _humanize_age(seconds: float | None) -> str | None:
 def _live_sort_key(row, now: datetime):
     published_age = _age_sec(row.published_at, now)
     detected_age = _age_sec(row.detected_at, now) or 0.0
-    lag = row.publication_lag_sec if row.publication_lag_sec is not None else 10_000_000.0
+    lag = _lag_sec(row.publication_lag_sec)
+    lag = lag if lag is not None else 10_000_000.0
     # Lower key is better:
     # 1) prefer rows with known published_at
     # 2) fresher published items first
@@ -197,6 +204,7 @@ async def news_latest(
     for r in rows:
         detected_age_sec = _age_sec(r.detected_at, now)
         published_age_sec = _age_sec(r.published_at, now)
+        publication_lag_sec = _lag_sec(r.publication_lag_sec)
         out.append(
             {
             "id": r.id,
@@ -209,7 +217,7 @@ async def news_latest(
             "match_method": r.match_method,
             "published_at": r.published_at,
             "detected_at": r.detected_at,
-            "publication_lag_sec": r.publication_lag_sec,
+            "publication_lag_sec": publication_lag_sec,
             "detected_age_sec": detected_age_sec,
             "published_age_sec": published_age_sec,
             "detected_recency": _humanize_age(detected_age_sec),
@@ -228,16 +236,67 @@ async def news_latest(
 @app.get("/metrics/source-lag")
 async def metrics_source_lag(
     source: str | None = None,
+    detected_after: datetime | None = None,
+    detected_before: datetime | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    rows = await source_lag_metrics(session, source=source)
+    rows = await source_lag_metrics(
+        session,
+        source=source,
+        detected_after=detected_after,
+        detected_before=detected_before,
+    )
     return [
         {
             "source": r.source,
             "item_count": int(r.item_count or 0),
-            "avg_publication_lag_sec": float(r.avg_publication_lag_sec) if r.avg_publication_lag_sec is not None else None,
-            "min_publication_lag_sec": float(r.min_publication_lag_sec) if r.min_publication_lag_sec is not None else None,
-            "max_publication_lag_sec": float(r.max_publication_lag_sec) if r.max_publication_lag_sec is not None else None,
+            "avg_publication_lag_sec": _lag_sec(r.avg_publication_lag_sec),
+            "min_publication_lag_sec": _lag_sec(r.min_publication_lag_sec),
+            "max_publication_lag_sec": _lag_sec(r.max_publication_lag_sec),
         }
         for r in rows
     ]
+
+
+@app.get("/metrics/source-health")
+async def metrics_source_health(
+    source: str | None = None,
+    detected_after: datetime | None = None,
+    detected_before: datetime | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    rows = await source_health_metrics(
+        session,
+        source=source,
+        detected_after=detected_after,
+        detected_before=detected_before,
+    )
+    now = datetime.utcnow()
+    out = []
+    for r in rows:
+        detected_age_sec = _age_sec(r.latest_detected_at, now)
+        if detected_age_sec is None:
+            status = "unknown"
+        elif detected_age_sec <= 180:
+            status = "active"
+        elif detected_age_sec <= 900:
+            status = "quiet"
+        else:
+            status = "stale"
+
+        out.append(
+            {
+                "source": r.source,
+                "status": status,
+                "total_items": int(r.total_items or 0),
+                "latest_detected_at": r.latest_detected_at,
+                "latest_published_at": r.latest_published_at,
+                "latest_detected_age_sec": detected_age_sec,
+                "latest_detected_recency": _humanize_age(detected_age_sec),
+                "items_last_1m": int(r.items_last_1m or 0),
+                "items_last_5m": int(r.items_last_5m or 0),
+                "items_last_15m": int(r.items_last_15m or 0),
+                "avg_lag_last_15m_sec": _lag_sec(r.avg_lag_last_15m_sec),
+            }
+        )
+    return out

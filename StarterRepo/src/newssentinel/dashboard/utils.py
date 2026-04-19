@@ -61,11 +61,15 @@ def build_feed_table(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
+    lag_series = pd.to_numeric(
+        df.get("publication_lag_sec", pd.Series([None] * len(df))),
+        errors="coerce",
+    ).clip(lower=0)
     table = pd.DataFrame(
         {
             "Detected": df.get("detected_recency", pd.Series(["-"] * len(df))),
             "Published": df.get("published_recency", pd.Series(["-"] * len(df))),
-            "Lag (s)": pd.to_numeric(df.get("publication_lag_sec"), errors="coerce").round(0),
+            "Lag (s)": lag_series.round(0),
             "Source": df.get("source", pd.Series(["-"] * len(df))),
             "Tickers": df.get("tickers", pd.Series([[]] * len(df))).apply(format_tickers),
             "Sentiment": df.get("sentiment_label", pd.Series(["-"] * len(df))).fillna("-"),
