@@ -46,6 +46,25 @@ def test_discover_rss_links_from_js_window_location():
     assert links == ["https://www.prnewswire.com/rss/news-releases-list.rss"]
 
 
+def test_discover_globenewswire_path_based_rss_links():
+    html = """
+    <html><body>
+      <a href="/AtomFeed/orgclass/1/feedTitle/GlobeNewswire - News about Public Companies">ATOM</a>
+      <a href="/JSWidgetFeed/orgclass/1/feedTitle/GlobeNewswire - News about Public Companies">Java Script</a>
+      <a href="/RssFeed/orgclass/1/feedTitle/GlobeNewswire - News about Public Companies">RSS</a>
+    </body></html>
+    """
+    links = _discover_rss_links(
+        listing_url="https://www.globenewswire.com/rss/list",
+        html=html,
+        max_links=10,
+    )
+    assert links == [
+        "https://www.globenewswire.com/AtomFeed/orgclass/1/feedTitle/GlobeNewswire - News about Public Companies",
+        "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire - News about Public Companies",
+    ]
+
+
 def test_build_conditional_headers_from_cache():
     headers = _build_conditional_headers(
         {"etag": '"abc123"', "last_modified": "Mon, 01 Jan 2026 00:00:00 GMT"}

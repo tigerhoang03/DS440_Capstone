@@ -73,12 +73,14 @@ def _discover_rss_links(listing_url: str, html: str, max_links: int) -> list[str
     links: list[str] = []
     seen: set[str] = set()
 
-    def maybe_add(raw_href: str) -> None:
+    def maybe_add(raw_href: str, link_text: str = "") -> None:
         candidate = urljoin(listing_url, raw_href.strip())
         lower = candidate.lower()
         has_feed_suffix = lower.endswith(".xml") or lower.endswith(".rss") or lower.endswith(".atom")
         looks_like_feed_query = "format=rss" in lower or "output=rss" in lower
-        if not (has_feed_suffix or looks_like_feed_query):
+        has_feed_path = "/rssfeed/" in lower or "/atomfeed/" in lower
+        has_feed_label = link_text.strip().lower() in {"rss", "atom"}
+        if not (has_feed_suffix or looks_like_feed_query or has_feed_path or has_feed_label):
             return
         if candidate in seen:
             return
@@ -86,7 +88,7 @@ def _discover_rss_links(listing_url: str, html: str, max_links: int) -> list[str
         links.append(candidate)
 
     for tag in soup.find_all("a", href=True):
-        maybe_add(tag["href"])
+        maybe_add(tag["href"], tag.get_text(" ", strip=True))
         if len(links) >= max_links:
             break
 
