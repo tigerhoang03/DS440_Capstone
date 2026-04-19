@@ -48,10 +48,13 @@ class Settings(BaseSettings):
 
     TRADINGVIEW_NEWS_FLOW_URL: str = "https://www.tradingview.com/news-flow/"
     TRADINGVIEW_NEWS_FALLBACK_URL: str = "https://www.tradingview.com/news/"
+    TRADINGVIEW_NEWS_API_URL: str = "https://news-mediator.tradingview.com/public/news-flow/v2/news"
     TRADINGVIEW_MAX_ITEMS: int = 120
     TRADINGVIEW_LIVE_MAX_ITEMS: int = 40
     TRADINGVIEW_LIVE_MAX_PUBLISHED_AGE_SEC: int = 600
     TRADINGVIEW_LIVE_INCLUDE_UNKNOWN_PUBLISHED: bool = False
+    TRADINGVIEW_GATED_SESSION_RESET_THRESHOLD: int = 3
+    TRADINGVIEW_GATED_DOMINANCE_RATIO: float = 0.75
 
     @property
     def postgres_dsn(self) -> str:
