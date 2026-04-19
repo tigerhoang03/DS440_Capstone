@@ -23,3 +23,6 @@ dist/
 
 # Collector runtime state
 .collector_state/
+
+# Generated benchmark/model artifacts
+artifacts/

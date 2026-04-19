@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     WIRE_SITES_RSS_INTERVAL_SEC: float = 5.0
     INGEST_BATCH_SIZE: int = 200
     INGEST_BLOCK_MS: int = 250
+    SENTIMENT_MODEL: str = "finbert"
+    FINBERT_MODEL_NAME: str = "ProsusAI/finbert"
+    FINBERT_BATCH_SIZE: int = 16
+    FINBERT_POLL_INTERVAL_SEC: float = 5.0
+    FINBERT_MAX_ROWS_PER_CYCLE: int = 200
 
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000

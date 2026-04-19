@@ -135,6 +135,17 @@ def _search_sort_key(row, now: datetime, q: str | None, tickers: list[str], rank
         *base_rank,
     )
 
+
+def _sentiment_label(row) -> str | None:
+    raw = getattr(row, "raw", None) or {}
+    finbert = raw.get("sentiment_finbert") if isinstance(raw, dict) else None
+    if isinstance(finbert, dict):
+        label = finbert.get("label")
+        if label:
+            return str(label)
+    return None
+
+
 @app.get("/health")
 async def health():
     return {"ok": True}
@@ -208,6 +219,7 @@ async def news_latest(
             "tickers": r.tickers,
             "sentiment": r.sentiment,
             "sentiment_model": r.sentiment_model,
+            "sentiment_label": _sentiment_label(r),
         }
         )
     return out

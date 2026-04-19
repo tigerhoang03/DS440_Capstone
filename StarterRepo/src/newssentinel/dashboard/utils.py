@@ -68,6 +68,8 @@ def build_feed_table(df: pd.DataFrame) -> pd.DataFrame:
             "Lag (s)": pd.to_numeric(df.get("publication_lag_sec"), errors="coerce").round(0),
             "Source": df.get("source", pd.Series(["-"] * len(df))),
             "Tickers": df.get("tickers", pd.Series([[]] * len(df))).apply(format_tickers),
+            "Sentiment": df.get("sentiment_label", pd.Series(["-"] * len(df))).fillna("-"),
+            "Score": pd.to_numeric(df.get("sentiment"), errors="coerce").round(3),
             "Headline": df.get("title", pd.Series(["-"] * len(df))).fillna("-"),
             "Link": df.get("url", pd.Series(["-"] * len(df))).apply(compact_url),
         }

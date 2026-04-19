@@ -13,6 +13,8 @@ def _row(
     title: str = "Headline",
     summary: str | None = None,
     tickers: list[str] | None = None,
+    sentiment_model: str | None = "vader",
+    raw: dict | None = None,
 ):
     return SimpleNamespace(
         id=item_id,
@@ -30,7 +32,8 @@ def _row(
         summary=summary,
         tickers=tickers or [],
         sentiment=0.1,
-        sentiment_model="vader",
+        sentiment_model=sentiment_model,
+        raw=raw or {},
     )
 
 
@@ -166,3 +169,23 @@ async def test_news_latest_passes_dedup_flag_to_repo(monkeypatch):
     await main.news_latest(limit=200, dedup=False, session=object())
 
     assert seen["dedup"] is False
+
+
+async def test_news_latest_returns_finbert_sentiment_label(monkeypatch):
+    now = datetime(2026, 4, 13, 14, 0, 0)
+    rows = [
+        _row(
+            1,
+            detected_at=now,
+            sentiment_model="finbert",
+            raw={"sentiment_finbert": {"label": "positive"}},
+        )
+    ]
+
+    async def fake_list_news_filtered(*args, **kwargs):
+        return rows
+
+    monkeypatch.setattr(main, "list_news_filtered", fake_list_news_filtered)
+    out = await main.news_latest(limit=200, session=object())
+
+    assert out[0]["sentiment_label"] == "positive"

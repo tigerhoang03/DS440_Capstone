@@ -253,9 +253,15 @@ def _detail_badges(row: pd.Series) -> list[str]:
     badges = [str(row.get("source") or "unknown")]
     tickers = row.get("tickers") or []
     badges.extend([str(ticker).upper() for ticker in tickers[:5]])
+    sentiment_label = row.get("sentiment_label")
+    if sentiment_label:
+        badges.append(str(sentiment_label))
     sentiment = row.get("sentiment")
     if pd.notna(sentiment):
         badges.append(f"sentiment {float(sentiment):.2f}")
+    sentiment_model = row.get("sentiment_model")
+    if sentiment_model:
+        badges.append(str(sentiment_model))
     return badges
 
 

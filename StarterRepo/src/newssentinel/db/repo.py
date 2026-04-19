@@ -1,11 +1,12 @@
 from datetime import datetime
 
-from sqlalchemy import String, cast, desc, func, select
+from sqlalchemy import String, case, cast, desc, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .tables import NewsItem
 from ..enrich.canonical import build_story_key, canonicalize_url
+from ..enrich.sentiment import FinbertSentiment
 from ..models.schema import NormalizedItem
 
 
@@ -67,9 +68,18 @@ async def upsert_news_items(session: AsyncSession, items: list[NormalizedItem]) 
             "tickers": func.coalesce(excluded.tickers, NewsItem.tickers),
             "author": func.coalesce(excluded.author, NewsItem.author),
             "language": func.coalesce(excluded.language, NewsItem.language),
-            "sentiment": func.coalesce(excluded.sentiment, NewsItem.sentiment),
-            "sentiment_model": func.coalesce(excluded.sentiment_model, NewsItem.sentiment_model),
-            "raw": func.coalesce(excluded.raw, NewsItem.raw),
+            "sentiment": case(
+                (NewsItem.sentiment_model == "finbert", NewsItem.sentiment),
+                else_=func.coalesce(excluded.sentiment, NewsItem.sentiment),
+            ),
+            "sentiment_model": case(
+                (NewsItem.sentiment_model == "finbert", NewsItem.sentiment_model),
+                else_=func.coalesce(excluded.sentiment_model, NewsItem.sentiment_model),
+            ),
+            "raw": case(
+                (NewsItem.sentiment_model == "finbert", NewsItem.raw),
+                else_=func.coalesce(excluded.raw, NewsItem.raw),
+            ),
         },
     )
     await session.execute(upsert_stmt)
@@ -155,6 +165,47 @@ async def list_news_filtered(
         .limit(limit)
     )
     return (await session.execute(stmt)).scalars().all()
+
+
+async def list_news_needing_sentiment(
+    session: AsyncSession,
+    limit: int = 200,
+    model_name: str = "finbert",
+):
+    stmt = (
+        select(NewsItem)
+        .where(NewsItem.title.is_not(None))
+        .where(NewsItem.title != "")
+        .where(or_(NewsItem.sentiment_model.is_(None), NewsItem.sentiment_model != model_name))
+        .order_by(desc(NewsItem.detected_at), desc(NewsItem.id))
+        .limit(limit)
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def update_news_sentiment(
+    session: AsyncSession,
+    item_id: int,
+    result: FinbertSentiment,
+    model_tag: str = "finbert",
+) -> None:
+    row = await session.get(NewsItem, item_id)
+    if row is None:
+        return
+
+    raw = dict(row.raw or {})
+    raw["sentiment_finbert"] = result.metadata()
+
+    stmt = (
+        update(NewsItem)
+        .where(NewsItem.id == item_id)
+        .values(
+            sentiment=result.score,
+            sentiment_model=model_tag,
+            raw=raw,
+        )
+    )
+    await session.execute(stmt)
 
 
 async def source_lag_metrics(session: AsyncSession, source: str | None = None):

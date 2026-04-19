@@ -105,18 +105,39 @@ Use `Ctrl+C` to stop loop mode.
 streamlit run src/newssentinel/dashboard/app.py
 ```
 
+### Run FinBERT sentiment enrichment
+```bash
+# Run in its own terminal after the ingest worker is running.
+# This scores article titles only and updates Postgres asynchronously.
+python -m newssentinel.worker.sentiment
+
+# Optional one-cycle smoke test
+python -m newssentinel.worker.sentiment --once
+```
+
+### Prepare and score the Financial PhraseBank benchmark
+```bash
+python -m newssentinel.scripts.prepare_sentiment_benchmark
+python -m newssentinel.scripts.score_sentiment_benchmark
+```
+
+Generated benchmark files are written under `artifacts/sentiment/` and are intentionally ignored by git.
+
 ---
 
 ## 2) Project architecture (high level)
 
 ```
 Collectors (async) --> Redis Streams --> Ingest Worker --> Postgres
-                                              |
-                                              v
-                                        FastAPI Query
-                                              |
-                                              v
-                                        Streamlit UI
+                                                 |
+                                                 v
+                                      FinBERT Sentiment Worker
+                                                 |
+                                                 v
+                                           FastAPI Query
+                                                 |
+                                                 v
+                                           Streamlit UI
 ```
 
 **Why Redis Streams?**
@@ -156,9 +177,9 @@ Collectors (async) --> Redis Streams --> Ingest Worker --> Postgres
 2. Get **FreshRSS** and/or **RSSGuard** running locally; implement DB readers.
 3. Plug in **IBKR** and **TDA** code you already have into the adapter skeletons.
 4. Add **dedupe** rules + tickers extraction + per-ticker streams.
-5. Add **sentiment** model:
-   - baseline: VADER (fast) for social
-   - upgrade: FinBERT (slower) for news, batched with GPU/ONNX if available
+5. Continue improving **sentiment**:
+   - current: VADER fallback in collectors + async FinBERT title scoring worker
+   - next: tune thresholds, compare benchmark metrics, and consider GPU/ONNX batching
 
 ---
 
