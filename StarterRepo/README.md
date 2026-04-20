@@ -69,6 +69,27 @@ python -m newssentinel.scripts.init_db
 Use `Ctrl+C` to stop loop mode.
 
 
+READ BELOW:
+If dashboard keeps greying in and out or "shadowing" in and out, the streamlit is auto refreshing, complete these steps:
+
+When Streamlit reruns, the page can briefly fade/gray because it is re-rendering the app. On a slower external computer, that effect is more noticeable.
+
+So if everything worked but the dashboard kept pulsing/fading, it is probably not a backend problem. It is the UI refreshing.
+
+What to try:
+
+Increase the refresh interval
+- In the sidebar, change refresh from 1s or 2s to something like 5s or 10s.
+
+Turn off auto-refresh
+- Toggle Auto-refresh off in the sidebar. The dashboard should stop graying in and out.
+
+Check machine load
+- If Docker, collectors, ingest worker, sentiment worker, API, and Streamlit are all running on a weaker laptop, the UI can feel flickery.
+
+If running on a laptop, turn AUTO-REFRESH OFF, or change refresh interval to a higher number than 5 seconds.
+
+
 ### Prepare and score the Financial PhraseBank benchmark
 ```bash
 python -m newssentinel.scripts.prepare_sentiment_benchmark
